@@ -4,19 +4,15 @@ import javafx.fxml.Initializable;
 
 import java.io.IOException;
 import java.net.URL;
-import java.sql.Connection;
-import java.sql.Date;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.ResourceBundle;
 
-import dao.connectDB;
+import service.BookService;
+import service.MemberService;
+import service.InvoiceService;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
@@ -258,7 +254,10 @@ public class admin_controller implements Initializable {
 
     
 	
-	private Connection connect;
+	private final BookService bookService = new BookService();
+	private final MemberService memberService = new MemberService();
+	private final InvoiceService invoiceService = new InvoiceService();
+	
 	private String originalBookID = null;
 	private ObservableList<Invoice> invoiceList = FXCollections.observableArrayList();
 	private FilteredList<Invoice> filteredList;
@@ -268,59 +267,15 @@ public class admin_controller implements Initializable {
 	private String originalAccountID = null;
 	
 	private ObservableList<Book> mb_getBookListFromDB() {
-		ObservableList<Book> list = FXCollections.observableArrayList();
-
-		String query = "SELECT * FROM books";
-		try (Connection conn = connectDB.getConnection();
-				Statement stmt = conn.createStatement();
-				ResultSet rs = stmt.executeQuery(query)) {
-
-			while (rs.next()) {
-				list.add(new Book(
-						rs.getString("book_id"), 
-						rs.getString("title"), 
-						rs.getString("author"),
-						rs.getString("genre"), 
-						rs.getInt("quantity"),
-						rs.getDouble("price") 
-						));
-			}
-		} catch (SQLException e) {
-			e.printStackTrace();
-		}
-		return list;
+		return FXCollections.observableArrayList(bookService.getAllBooks());
 	}
 
 	private final ObservableList<String> genreOptions = FXCollections.observableArrayList("Self-Help", "Fiction",
 			"Non-fiction", "Science", "History", "Fantasy", "Biography", "Romance", "Horror", "Mystery", "Children");
 
 	public void loadBooks() {
-	    bookList.clear(); // Xóa dữ liệu cũ trong danh sách
-
-	    String query = "SELECT * FROM Books";
-
-	    try {
-	        connect = connectDB.getConnection();
-	        PreparedStatement stmt = connect.prepareStatement(query);
-	        ResultSet rs = stmt.executeQuery();
-
-	        while (rs.next()) {
-	            String id = rs.getString("book_id");
-	            String title = rs.getString("title");
-	            String author = rs.getString("author");
-	            String genre = rs.getString("genre");
-	            int quantity = rs.getInt("quantity");
-	            double price = rs.getDouble("price");
-
-	            Book book = new Book(id, title, author, genre, quantity, price);
-	            bookList.add(book);
-	        }
-
-	        // Sau khi cập nhật bookList, TableView sẽ tự động hiển thị lại nếu bạn đã gắn dữ liệu qua tableView.setItems(bookList);
-	    } catch (SQLException e) {
-	        e.printStackTrace();
-	        showAlert(Alert.AlertType.ERROR, "Database Error", "Failed to load books from database.");
-	    }
+	    bookList.clear(); 
+	    bookList.addAll(bookService.getAllBooks());
 	}
 
 	
@@ -329,7 +284,6 @@ public class admin_controller implements Initializable {
 		String id = mb_bookID.getText().trim();
 		String title = mb_title.getText().trim();
 		String author = mb_author.getText().trim();
-		//String genre = mb_genre.getValue().trim();
 		String genreValue = mb_genre.getValue();
 	    String genre = (genreValue != null) ? genreValue.trim() : "";
 	    
@@ -349,38 +303,15 @@ public class admin_controller implements Initializable {
 			return;
 		}
 
-		try {
-			connect = connectDB.getConnection();
-
-			String checkSql = "SELECT book_id FROM Books WHERE book_id = ?";
-			PreparedStatement checkStmt = connect.prepareStatement(checkSql);
-			checkStmt.setString(1, id);
-			ResultSet rs = checkStmt.executeQuery();
-
-			if (rs.next()) {
-				showAlert(Alert.AlertType.ERROR, "Duplicate BookID", "A book with this ID already exists.");
-				return;
-			}
-
-			String insertSql = "INSERT INTO Books (book_id, title, author, genre, quantity, price) VALUES (?, ?, ?, ?, ?, ?)";
-			PreparedStatement insertStmt = connect.prepareStatement(insertSql);
-			insertStmt.setString(1, id);
-			insertStmt.setString(2, title);
-			insertStmt.setString(3, author);
-			insertStmt.setString(4, genre);
-			insertStmt.setInt(5, quantity);
-			insertStmt.setDouble(6, price);
-			insertStmt.executeUpdate();
-
-			Book book = new Book(id, title, author, genre, quantity, price);
-			bookList.add(book);
-
+		Book newBook = new Book(id, title, author, genre, quantity, price);
+		boolean success = bookService.addBook(newBook);
+		
+		if (success) {
+			bookList.add(newBook);
 			showAlert(Alert.AlertType.INFORMATION, "Success", "Book inserted successfully.");
 			mb_clearBookFields();
-
-		} catch (SQLException e) {
-			e.printStackTrace();
-			showAlert(Alert.AlertType.ERROR, "Database Error", "Failed to insert book into database.");
+		} else {
+			showAlert(Alert.AlertType.ERROR, "Error", "Failed to insert book. ID might already exist.");
 		}
 	}
 
@@ -434,40 +365,17 @@ public class admin_controller implements Initializable {
 			return;
 		}
 
-		try {
-			connect = connectDB.getConnection();
+		Book updatedBook = new Book(newID, title, author, genre, quantity, price);
+		boolean success = bookService.updateBook(updatedBook, originalBookID);
 
-			if (!newID.equals(originalBookID)) {
-				String checkSql = "SELECT book_id FROM Books WHERE book_id = ?";
-				PreparedStatement checkStmt = connect.prepareStatement(checkSql);
-				checkStmt.setString(1, newID);
-				ResultSet rs = checkStmt.executeQuery();
-				if (rs.next()) {
-					showAlert(Alert.AlertType.ERROR, "Duplicate ID", "Book ID already exists. Choose a different ID.");
-					return;
-				}
-			}
-
-			String sql = "UPDATE Books SET book_id=?, title=?, author=?, genre=?, quantity=?, price=? WHERE book_id=?";
-			PreparedStatement stmt = connect.prepareStatement(sql);
-			stmt.setString(1, newID);
-			stmt.setString(2, title);
-			stmt.setString(3, author);
-			stmt.setString(4, genre);
-			stmt.setInt(5, quantity);
-			stmt.setDouble(6, price);
-			stmt.setString(7, originalBookID);
-			stmt.executeUpdate();
-
+		if (success) {
 			showAlert(Alert.AlertType.INFORMATION, "Success", "Book updated successfully.");
-			bookList = mb_getBookListFromDB();
+			bookList.setAll(bookService.getAllBooks());
 			mb_tableView.setItems(bookList);
 			mb_clearBookFields();
 			originalBookID = null;
-
-		} catch (SQLException e) {
-			e.printStackTrace();
-			showAlert(Alert.AlertType.ERROR, "Database Error", "Failed to update book.");
+		} else {
+			showAlert(Alert.AlertType.ERROR, "Error", "Failed to update book. Check ID or connection.");
 		}
 	}
 
@@ -486,20 +394,14 @@ public class admin_controller implements Initializable {
 		Optional<ButtonType> option = alert.showAndWait();
 
 		if (option.isPresent() && option.get() == ButtonType.OK) {
-			try {
-				connect = connectDB.getConnection();
-				String sql = "DELETE FROM Books WHERE book_id=?";
-				PreparedStatement stmt = connect.prepareStatement(sql);
-				stmt.setString(1, id);
-				stmt.executeUpdate();
-
-				bookList = mb_getBookListFromDB();
+			boolean success = bookService.deleteBook(id);
+			if (success) {
+				bookList.setAll(bookService.getAllBooks());
 				mb_tableView.setItems(bookList);
 				mb_clearBookFields();
 				originalBookID = null;
-
-			} catch (SQLException e) {
-				e.printStackTrace();
+			} else {
+				showAlert(Alert.AlertType.ERROR, "Error", "Failed to delete book.");
 			}
 		}
 	}
@@ -535,29 +437,7 @@ public class admin_controller implements Initializable {
 	
 	// Members
 	private ObservableList<Member> mem_getMemberList() {
-	    ObservableList<Member> list = FXCollections.observableArrayList();
-
-	    String query = "SELECT m.account_id, m.full_name, m.email, m.phone, m.address, m.rank, a.is_active " +
-	                   "FROM Members m JOIN Accounts a ON m.account_id = a.account_id";
-	    try (Connection conn = connectDB.getConnection();
-	         Statement stmt = conn.createStatement();
-	         ResultSet rs = stmt.executeQuery(query)) {
-
-	        while (rs.next()) {
-	            list.add(new Member(
-	                    rs.getString("account_id"),
-	                    rs.getString("full_name"),
-	                    rs.getString("email"),
-	                    rs.getString("phone"),
-	                    rs.getString("address"),
-	                    rs.getString("rank"),
-	                    rs.getBoolean("is_active") ? "Active" : "Inactive"
-	            ));
-	        }
-	    } catch (SQLException e) {
-	        e.printStackTrace();
-	    }
-	    return list;
+	    return FXCollections.observableArrayList(memberService.getAllMembers());
 	}
 
 	
@@ -607,40 +487,15 @@ public class admin_controller implements Initializable {
 	        return;
 	    }
 
-	    try (Connection conn = connectDB.getConnection()) {
-	        String checkSql = "SELECT account_id FROM Members WHERE account_id = ?";
-	        PreparedStatement checkStmt = conn.prepareStatement(checkSql);
-	        checkStmt.setString(1, id);
-	        ResultSet rs = checkStmt.executeQuery();
+	    Member newMember = new Member(id, fullName, phone, email, address, rank);
+	    boolean success = memberService.addMember(newMember);
 
-	        if (rs.next()) {
-	            showAlert(Alert.AlertType.ERROR, "Duplicate ID", "A member with this ID already exists.");
-	            return;
-	        }
-
-	        String insertAccount = "INSERT INTO Accounts (account_id, username, password_hash, role, is_active) VALUES (?, ?, ?, 'member', 1)";
-	        PreparedStatement accStmt = conn.prepareStatement(insertAccount);
-	        accStmt.setString(1, id);
-	        accStmt.setString(2, id);
-	        accStmt.setString(3, "123");
-	        accStmt.executeUpdate();
-
-	        String insertMember = "INSERT INTO Members (account_id, full_name, phone, email, address, rank) VALUES (?, ?, ?, ?, ?, ?)";
-	        PreparedStatement memStmt = conn.prepareStatement(insertMember);
-	        memStmt.setString(1, id);
-	        memStmt.setString(2, fullName);
-	        memStmt.setString(3, phone);
-	        memStmt.setString(4, email);
-	        memStmt.setString(5, address);
-	        memStmt.setString(6, rank);
-	        memStmt.executeUpdate();
-	        
+	    if (success) {
 	        memberList.add(new Member(id, fullName, email, phone, address, rank, "Active"));
 	        showAlert(Alert.AlertType.INFORMATION, "Success", "Member inserted successfully.");
 	        mem_clearMemberFields();
-	    } catch (SQLException e) {
-	        e.printStackTrace();
-	        showAlert(Alert.AlertType.ERROR, "Database Error", "Failed to insert member.");
+	    } else {
+	        showAlert(Alert.AlertType.ERROR, "Error", "Failed to insert member. ID might already exist.");
 	    }
 	}
 
@@ -658,37 +513,17 @@ public class admin_controller implements Initializable {
 	        return;
 	    }
 
-	    try (Connection conn = connectDB.getConnection()) {
-	        if (!newID.equals(originalAccountID)) {
-	            String checkSql = "SELECT account_id FROM Members WHERE account_id = ?";
-	            PreparedStatement checkStmt = conn.prepareStatement(checkSql);
-	            checkStmt.setString(1, newID);
-	            ResultSet rs = checkStmt.executeQuery();
-	            if (rs.next()) {
-	                showAlert(Alert.AlertType.ERROR, "Duplicate ID", "Member ID already exists.");
-	                return;
-	            }
-	        }
+	    Member updatedMember = new Member(newID, fullName, phone, email, address, rank);
+	    boolean success = memberService.updateMember(updatedMember, originalAccountID);
 
-	        String updateMember = "UPDATE Members SET account_id=?, full_name=?, phone=?, email=?, address=?, rank=? WHERE account_id=?";
-	        PreparedStatement stmt = conn.prepareStatement(updateMember);
-	        stmt.setString(1, newID);
-	        stmt.setString(2, fullName);
-	        stmt.setString(3, phone);
-	        stmt.setString(4, email);
-	        stmt.setString(5, address);
-	        stmt.setString(6, rank);
-	        stmt.setString(7, originalAccountID);
-	        stmt.executeUpdate();
-
+	    if (success) {
 	        showAlert(Alert.AlertType.INFORMATION, "Success", "Member updated successfully.");
-	        memberList = mem_getMemberList();
+	        memberList.setAll(memberService.getAllMembers());
 	        mem_tableView.setItems(memberList);
 	        mem_clearMemberFields();
 	        originalAccountID = null;
-	    } catch (SQLException e) {
-	        e.printStackTrace();
-	        showAlert(Alert.AlertType.ERROR, "Database Error", "Failed to update member.");
+	    } else {
+	        showAlert(Alert.AlertType.ERROR, "Error", "Failed to update member. Check ID or connection.");
 	    }
 	}
 
@@ -704,62 +539,21 @@ public class admin_controller implements Initializable {
 	    Optional<ButtonType> result = alert.showAndWait();
 
 	    if (result.isPresent() && result.get() == ButtonType.YES) {
-	        try (Connection conn = connectDB.getConnection()) {
-	            conn.setAutoCommit(false);
-
-	            String deleteMemberSQL = "DELETE FROM Members WHERE account_id = ?";
-	            try (PreparedStatement ps1 = conn.prepareStatement(deleteMemberSQL)) {
-	                ps1.setString(1, id);
-	                ps1.executeUpdate();
-	            }
-
-	            String deleteAccountSQL = "DELETE FROM Accounts WHERE account_id = ?";
-	            try (PreparedStatement ps2 = conn.prepareStatement(deleteAccountSQL)) {
-	                ps2.setString(1, id);
-	                ps2.executeUpdate();
-	            }
-
-	            conn.commit();
-
-	            memberList = mem_getMemberList();
+	        boolean success = memberService.deleteMember(id);
+	        if (success) {
+	            memberList.setAll(memberService.getAllMembers());
 	            mem_tableView.setItems(memberList);
 	            mem_clearMemberFields();
 	            originalAccountID = null;
-
-	        } catch (SQLException e) {
-	            e.printStackTrace();
-	            showAlert(Alert.AlertType.ERROR, "Database Error", "Failed to delete member.");
+	        } else {
+	            showAlert(Alert.AlertType.ERROR, "Error", "Failed to delete member.");
 	        }
 	    }
 	}
 
 	private void searchMembers(String name) {
 	    memberList.clear();
-	    
-	    String sql = "SELECT account_id, full_name, email, phone, address, rank FROM Members WHERE full_name LIKE ?";
-	    
-	    try (Connection conn = connectDB.getConnection();
-	         PreparedStatement stmt = conn.prepareStatement(sql)) {
-	         
-	        stmt.setString(1, "%" + name + "%"); // LIKE với wildcard
-	        
-	        ResultSet rs = stmt.executeQuery();
-	        
-	        while (rs.next()) {
-	            String id = rs.getString("account_id");
-	            String fullName = rs.getString("full_name");
-	            String email = rs.getString("email");
-	            String phone = rs.getString("phone");
-	            String address = rs.getString("address");
-	            String rank = rs.getString("rank");
-	            
-	            memberList.add(new Member(id, fullName, email, phone, address, rank, "Active"));
-	        }
-	        
-	    } catch (SQLException e) {
-	        e.printStackTrace();
-	        showAlert(Alert.AlertType.ERROR, "Database Error", "Failed to search members.");
-	    }
+	    memberList.addAll(memberService.searchMembersByName(name));
 	}
 
 	// Orders
@@ -799,31 +593,7 @@ public class admin_controller implements Initializable {
 	}
 	
 	public ObservableList<Invoice> loadInvoices() {
-	    ObservableList<Invoice> invoiceList = FXCollections.observableArrayList();
-
-	    String sql = "SELECT invoice_id, member_id, employee_id, date_created, total_price, discount_applied FROM Invoices";
-
-	    try (Connection conn = connectDB.getConnection();
-	         PreparedStatement stmt = conn.prepareStatement(sql);
-	         ResultSet rs = stmt.executeQuery()) {
-
-	        while (rs.next()) {
-	            String invoiceId = rs.getString("invoice_id");
-	            LocalDate dateCreated = rs.getDate("date_created").toLocalDate();
-	            String memberId = rs.getString("member_id");
-	            String employeeId = rs.getString("employee_id");
-	            double totalPrice = rs.getDouble("total_price");
-	            int discount = rs.getInt("discount_applied");
-
-	            Invoice invoice = new Invoice(invoiceId, dateCreated, memberId, employeeId, totalPrice, discount);
-	            invoiceList.add(invoice);
-	        }
-
-	    } catch (SQLException e) {
-	        e.printStackTrace();
-	    }
-
-	    return invoiceList;
+	    return FXCollections.observableArrayList(invoiceService.getAllInvoices());
 	}
 	
 	private void showInvoiceDetails(Invoice invoice) {
@@ -873,29 +643,7 @@ public class admin_controller implements Initializable {
 	}
 
 	public void refreshInvoiceTable() {
-        invoiceList.clear();
-
-        String sql = "SELECT invoice_id, date_created, member_id, employee_id, total_price, discount_applied FROM Invoices";
-
-        try (Connection conn = connectDB.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-
-            while (rs.next()) {
-                String invoiceId = rs.getString("invoice_id");
-                LocalDate dateCreated = rs.getDate("date_created").toLocalDate();
-                String memberId = rs.getString("member_id");
-                String employeeId = rs.getString("employee_id");
-                double totalPrice = rs.getDouble("total_price");
-                int discountApplied = rs.getInt("discount_applied");
-
-                Invoice invoice = new Invoice(invoiceId, dateCreated, memberId, employeeId, totalPrice, discountApplied);
-                invoiceList.add(invoice);
-            }
-
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
+        invoiceList.setAll(invoiceService.getAllInvoices());
     }
 	
 	@FXML
@@ -917,55 +665,12 @@ public class admin_controller implements Initializable {
 
 	    Optional<ButtonType> result = confirm.showAndWait();
 	    if (result.isPresent() && result.get() == ButtonType.OK) {
-	        try (Connection conn = connectDB.getConnection()) {
-	            conn.setAutoCommit(false); // bật transaction
-
-	            String invoiceId = selectedInvoice.getInvoiceId();
-
-	            // 1. Lấy danh sách sách và quantity từ hóa đơn
-	            String getDetailsQuery = "SELECT book_id, quantity FROM Invoice_Details WHERE invoice_id = ?";
-	            PreparedStatement getDetailsStmt = conn.prepareStatement(getDetailsQuery);
-	            getDetailsStmt.setString(1, invoiceId);
-	            ResultSet rs = getDetailsStmt.executeQuery();
-
-	            Map<String, Integer> bookReturns = new HashMap<>();
-	            while (rs.next()) {
-	                String bookId = rs.getString("book_id");
-	                int quantity = rs.getInt("quantity");
-	                bookReturns.put(bookId, quantity);
-	            }
-
-	            // 2. Cập nhật lại quantity trong bảng Books
-	            String updateBookQuery = "UPDATE Books SET quantity = quantity + ? WHERE book_id = ?";
-	            PreparedStatement updateBookStmt = conn.prepareStatement(updateBookQuery);
-	            for (Map.Entry<String, Integer> entry : bookReturns.entrySet()) {
-	                updateBookStmt.setInt(1, entry.getValue());
-	                updateBookStmt.setString(2, entry.getKey());
-	                updateBookStmt.addBatch();
-	            }
-	            updateBookStmt.executeBatch();
-
-	            // 3. Xóa Invoice_Details
-	            String deleteDetailsQuery = "DELETE FROM Invoice_Details WHERE invoice_id = ?";
-	            PreparedStatement deleteDetailsStmt = conn.prepareStatement(deleteDetailsQuery);
-	            deleteDetailsStmt.setString(1, invoiceId);
-	            deleteDetailsStmt.executeUpdate();
-
-	            // 4. Xóa hóa đơn trong Invoices
-	            String deleteInvoiceQuery = "DELETE FROM Invoices WHERE invoice_id = ?";
-	            PreparedStatement deleteInvoiceStmt = conn.prepareStatement(deleteInvoiceQuery);
-	            deleteInvoiceStmt.setString(1, invoiceId);
-	            int rowsDeleted = deleteInvoiceStmt.executeUpdate();
-
-	            if (rowsDeleted > 0) {
-	                conn.commit();
-	                invoiceList.remove(selectedInvoice);
-	            } else {
-	                conn.rollback();
-	            }
-
-	        } catch (SQLException e) {
-	            e.printStackTrace();
+	        boolean success = invoiceService.deleteInvoiceAndReturnBooks(selectedInvoice);
+	        if (success) {
+	            invoiceList.remove(selectedInvoice);
+	        } else {
+	            Alert error = new Alert(Alert.AlertType.ERROR, "Failed to delete invoice.", ButtonType.OK);
+	            error.showAndWait();
 	        }
 	    }
 	}
@@ -973,92 +678,31 @@ public class admin_controller implements Initializable {
 
 	// Statistics
 	public void st_updateAvailableBooks() {
-		String query = "SELECT SUM(quantity) AS total_quantity FROM Books";
-		
-		try (Connection conn = connectDB.getConnection();
-	             PreparedStatement stmt = conn.prepareStatement(query);
-	             ResultSet rs = stmt.executeQuery()) {
-
-	            if (rs.next()) {
-	                int total = rs.getInt("total_quantity");
-	                st_availableBooks.setText(String.valueOf(total));
-	            } else {
-	            	st_availableBooks.setText("0");
-	            }
-
-	        } catch (Exception e) {
-	            e.printStackTrace();
-	        }
+		int total = bookService.getTotalAvailableQuantity();
+		st_availableBooks.setText(String.valueOf(total));
 	}
 	
 	public void st_updateTotalMembers() {
-	    String query = "SELECT COUNT(*) AS total_members FROM Accounts WHERE role = 'member'";
-
-	    try (Connection conn = connectDB.getConnection();
-	         PreparedStatement stmt = conn.prepareStatement(query);
-	         ResultSet rs = stmt.executeQuery()) {
-
-	        if (rs.next()) {
-	            int total = rs.getInt("total_members");
-	            st_totalMembers.setText(String.valueOf(total));
-	        } else {
-	            st_totalMembers.setText("0");
-	        }
-
-	    } catch (Exception e) {
-	        e.printStackTrace();
-	    }
+	    int total = memberService.getTotalMembersCount();
+	    st_totalMembers.setText(String.valueOf(total));
 	}
 	
 	public void st_updateTotalIncomes() {
-	    String query = "SELECT SUM(total_price * (100 - discount_applied) / 100) AS total_income_after_discount FROM Invoices";
-
-	    try (Connection conn = connectDB.getConnection();
-	         PreparedStatement stmt = conn.prepareStatement(query);
-	         ResultSet rs = stmt.executeQuery()) {
-
-	        if (rs.next()) {
-	            double total = rs.getDouble("total_income_after_discount");
-	            st_totalIncomes.setText("$" + String.format("%.2f", total));
-	        } else {
-	            st_totalIncomes.setText("$0.00");
-	        }
-
-	    } catch (Exception e) {
-	        e.printStackTrace();
-	        st_totalIncomes.setText("$0.00");
-	    }
+	    double total = invoiceService.getTotalIncomeAfterDiscount();
+	    st_totalIncomes.setText("$" + String.format("%.2f", total));
 	}
 
 	
 	public void loadIncomeBarChart() {
-	    String query = """
-	        SELECT YEAR(date_created) AS year, MONTH(date_created) AS month, SUM(total_price) AS total_income
-	        FROM Invoices
-	        GROUP BY YEAR(date_created), MONTH(date_created)
-	        ORDER BY YEAR(date_created), MONTH(date_created)
-	        """;
-
 	    XYChart.Series<String, Number> series = new XYChart.Series<>();
-
-	    try (Connection conn = connectDB.getConnection();
-	         PreparedStatement stmt = conn.prepareStatement(query);
-	         ResultSet rs = stmt.executeQuery()) {
-
-	        while (rs.next()) {
-	            int year = rs.getInt("year");
-	            int month = rs.getInt("month");
-	            double income = rs.getDouble("total_income");
-
-	            String label = formatYearMonthLabel(year, month);
-	            series.getData().add(new XYChart.Data<>(label, income));
-	        }
-	        st_incomeChart.getData().clear();
-	        st_incomeChart.getData().add(series);
-
-	    } catch (SQLException e) {
-	        e.printStackTrace();
+	    Map<String, Double> data = invoiceService.getIncomeByMonthYear();
+	    
+	    for (Map.Entry<String, Double> entry : data.entrySet()) {
+	        series.getData().add(new XYChart.Data<>(entry.getKey(), entry.getValue()));
 	    }
+	    
+	    st_incomeChart.getData().clear();
+	    st_incomeChart.getData().add(series);
 	}
 
 	private String formatYearMonthLabel(int year, int month) {
@@ -1066,31 +710,16 @@ public class admin_controller implements Initializable {
 	}
 	
 	public void loadMemberRankBarChart() {
-	    String sql = "SELECT rank, COUNT(*) AS total FROM Members GROUP BY rank";
+	    st_rankBarChart.getData().clear();
+	    XYChart.Series<String, Number> series = new XYChart.Series<>();
+	    series.setName("Thành viên theo hạng");
 
-	    try (Connection conn = connectDB.getConnection();
-	         PreparedStatement pst = conn.prepareStatement(sql);
-	         ResultSet resultSet = pst.executeQuery()) {  // Thiếu executeQuery
-
-	        // Clear old data
-	        st_rankBarChart.getData().clear();
-
-	        // Create new series
-	        XYChart.Series<String, Number> series = new XYChart.Series<>();
-	        series.setName("Thành viên theo hạng");
-
-	        while (resultSet.next()) {
-	            String rank = resultSet.getString("rank");
-	            int count = resultSet.getInt("total");
-
-	            series.getData().add(new XYChart.Data<>(rank, count));
-	        }
-
-	        st_rankBarChart.getData().add(series);
-
-	    } catch (SQLException e) {
-	        e.printStackTrace();
+	    Map<String, Integer> data = memberService.getMembersRankDistribution();
+	    for (Map.Entry<String, Integer> entry : data.entrySet()) {
+	        series.getData().add(new XYChart.Data<>(entry.getKey(), entry.getValue()));
 	    }
+
+	    st_rankBarChart.getData().add(series);
 	}
 
 	

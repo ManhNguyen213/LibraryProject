@@ -11,12 +11,10 @@ import javafx.scene.control.Button;
 import javafx.event.ActionEvent;
 import javafx.stage.Stage;
 
-import java.sql.Connection;
 import java.io.IOException;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+import java.util.Optional;
 
-import dao.connectDB;
+import service.AuthService;
 
 public class login_controller {
 
@@ -32,10 +30,7 @@ public class login_controller {
     @FXML
     private Button exitButton;
     
-    // DB TOOLS
-    private Connection connect;
-    private PreparedStatement prepare;
-    private ResultSet result;
+    private final AuthService authService = new AuthService();
     
     private void loadScene(String fxmlPath) throws IOException {
         Parent root = FXMLLoader.load(getClass().getResource(fxmlPath));
@@ -53,39 +48,23 @@ public class login_controller {
     		return;
     	}
     	
-    	String sql = "SELECT role FROM Accounts WHERE username = ? AND password_hash = ? AND is_active = 1";
+    	Optional<String> roleOpt = authService.login(username, password);
     	
-    	try {
-    		connect = connectDB.getConnection();
-    		prepare = connect.prepareStatement(sql);
-    		prepare.setString(1, username);
-    		prepare.setString(2, password);
-    		
-    		result = prepare.executeQuery();
-    		
-            if (result.next()) {
-                String role = result.getString("role");
+        if (roleOpt.isPresent()) {
+            String role = roleOpt.get();
 
-                if (role.equals("manager")) {
+            if (role.equals("manager")) {
+                try {
                     loadScene("/views/fxml/manager.fxml");
-                } else if (role.equals("customer")) {
-                	showAlert(Alert.AlertType.ERROR, "Login", "Login as customer.");
+                } catch (IOException e) {
+                    e.printStackTrace();
                 }
-            } else {
-                showAlert(Alert.AlertType.ERROR, "Error", "Unable to login.");
+            } else if (role.equals("member")) {
+            	showAlert(Alert.AlertType.INFORMATION, "Login", "Logged in as member.");
             }
-
-    	} catch (Exception e) {
-            e.printStackTrace();
-        } finally {
-        	try {
-        		if (result != null) result.close();
-                if (prepare != null) prepare.close();
-                if (connect != null) connect.close();
-        	} catch (Exception e) {
-        		e.printStackTrace();
-        	}
-        } 
+        } else {
+            showAlert(Alert.AlertType.ERROR, "Error", "Unable to login. Invalid credentials.");
+        }
     }
     
     @FXML
@@ -101,5 +80,4 @@ public class login_controller {
         alert.setContentText(message);
         alert.showAndWait();
     }
-    
 }
